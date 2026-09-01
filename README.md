@@ -47,7 +47,3 @@ To reproduce:
 3. Each driver script (`run_exp_*.py`) prints the `/kaggle/input` tree it finds before running, and falls back through a short list of candidate mount paths, since Kaggle's mount path differs between a `dataset_sources` entry and a `kernel_sources` entry (`/kaggle/input/datasets/<owner>/<slug>/...` vs. `/kaggle/input/notebooks/<owner>/<slug>/...`).
 
 Results are written as `results.json` (or `gradcam_results.json`) to each kernel's `/kaggle/working` output.
-
-## Notes on this reconstruction
-
-No source code was released with the original submission this paper revises. `code/model.py`'s architecture, and the training protocol in `code/train.py` (learning rate, regularization, early stopping), were reconstructed from the original paper's text description and corrected against what actually trains, not assumed to match an unreleased implementation. Both files document the specific empirical findings that drove each correction.
