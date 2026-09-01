@@ -1,0 +1,15 @@
+# Default-deny: nothing is tracked unless explicitly allowed below.
+# This repo is code-only (training/preprocessing scripts + Kaggle push
+# configs). Kaggle account credential folders, paper drafts, datasets,
+# and generated figures live in this working directory but are never
+# meant to be committed.
+*
+
+!.gitignore
+!README.md
+
+!code/
+!code/**
+
+!kernels/
+!kernels/**

@@ -1,0 +1,16 @@
+{
+  "id": "namanjolly/exp-b-xbd-severity-train",
+  "title": "Exp B xBD Severity Train",
+  "code_file": "run_exp_b.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "",
+  "dataset_sources": ["amanjolly1994/ieee-access-hurricane-code"],
+  "competition_sources": [],
+  "kernel_sources": ["amanjolly1994/xbd-hurricane-preprocess"],
+  "model_sources": []
+}

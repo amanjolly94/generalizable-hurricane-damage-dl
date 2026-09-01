@@ -1,0 +1,53 @@
+# Multimodal Deep Learning for Post-Hurricane Building Damage Assessment
+
+Code accompanying "Toward Generalizable Multimodal Deep Learning for Post-Hurricane Building Damage Assessment" (Jolly, Sharma, Pandey). Reproduces every experimental result reported in the paper: binary damage classification, cross-hurricane generalization, severity classification, statistical significance testing, and Grad-CAM explainability.
+
+## Architecture
+
+A convolutional autoencoder extracts a spatial feature map from satellite imagery, which passes through a MobileNetV2-inspired classification path (Conv2D, DepthwiseConv2D, BatchNorm, a residual connection) and is fused with a small geolocation embedding built from latitude and longitude. See `code/model.py`.
+
+## Data
+
+Two public datasets, neither included in this repository:
+
+- **Hurricane Harvey benchmark**: Kaggle dataset `kmader/satellite-images-of-hurricane-damage`.
+- **xBD**: multi-hazard building damage dataset, used here via its four hurricane subsets (Harvey, Florence, Matthew, Michael). Sourced through the Kaggle mirror `qianlanzz/xbd-dataset`.
+
+## Repository layout
+
+```
+code/
+  model.py                  Model architecture (binary and severity heads)
+  train.py                  Training loop, evaluation, focal loss, two-proportion z-test inputs
+  train_cross_hurricane.py  Leave-one-hurricane-out generalization experiment
+  baseline_train.py         VGG16 / MobileNetV2 / DenseNet121 baselines
+  gradcam_eval.py           Grad-CAM + quantitative pointing-game evaluation
+  harvey_preprocess.py      Loads the Harvey dataset (geolocation is encoded in filenames)
+  xbd_preprocess.py         Crops xBD building polygons into per-building patches with labels
+  make_figures.py           Regenerates the paper's result figures from recorded metrics
+  make_sample_figure.py     Regenerates the dataset-sample and colorspace figures
+
+kernels/
+  One folder per experiment, each a self-contained Kaggle kernel push:
+  a `kernel-metadata.json` (dataset/kernel sources, GPU flag) and a driver
+  script that locates the mounted data/code and calls into code/.
+```
+
+## Running an experiment
+
+Every experiment in this paper was run on Kaggle, not locally. The `code/` modules are packaged as a Kaggle Dataset that each kernel imports at runtime; the `kernels/*/kernel-metadata.json` files declare that dependency plus the raw-data `dataset_sources` / `kernel_sources`.
+
+To reproduce:
+
+1. Upload the contents of `code/` as a Kaggle Dataset.
+2. For each experiment folder under `kernels/`, update `kernel-metadata.json`'s `dataset_sources` to point at your own code dataset and the relevant raw-data dataset, then push it:
+   ```
+   kaggle kernels push -p kernels/<experiment_name>
+   ```
+3. Each driver script (`run_exp_*.py`) prints the `/kaggle/input` tree it finds before running, and falls back through a short list of candidate mount paths, since Kaggle's mount path differs between a `dataset_sources` entry and a `kernel_sources` entry (`/kaggle/input/datasets/<owner>/<slug>/...` vs. `/kaggle/input/notebooks/<owner>/<slug>/...`).
+
+Results are written as `results.json` (or `gradcam_results.json`) to each kernel's `/kaggle/working` output.
+
+## Notes on this reconstruction
+
+No source code was released with the original submission this paper revises. `code/model.py`'s architecture, and the training protocol in `code/train.py` (learning rate, regularization, early stopping), were reconstructed from the original paper's text description and corrected against what actually trains, not assumed to match an unreleased implementation. Both files document the specific empirical findings that drove each correction.

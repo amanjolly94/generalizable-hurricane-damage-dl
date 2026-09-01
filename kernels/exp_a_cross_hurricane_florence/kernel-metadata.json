@@ -1,0 +1,16 @@
+{
+  "id": "nehasharma013/exp-a-cross-hurricane-florence",
+  "title": "Exp A Cross Hurricane Florence",
+  "code_file": "run_exp_a.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "",
+  "dataset_sources": ["amanjolly1994/ieee-access-hurricane-code"],
+  "competition_sources": [],
+  "kernel_sources": ["amanjolly1994/xbd-hurricane-preprocess"],
+  "model_sources": []
+}
