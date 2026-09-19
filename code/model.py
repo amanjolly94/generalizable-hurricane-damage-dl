@@ -172,6 +172,178 @@ def build_full_model(image_size=IMAGE_SIZE, num_classes=1, use_residual=True,
     return models.Model([image_input, geo_input], outputs, name="autoencoder_c_mobilenetv2")
 
 
+def build_full_model_bitemporal(image_size=IMAGE_SIZE, num_classes=1, use_residual=True,
+                                 dropout_rate=0.3, l2_reg=1e-4, image_summary_dim=None,
+                                 share_encoder=True, fusion_mode="concat"):
+    """Bitemporal variant for Experiment F (EXPERIMENT_DESIGN.md): takes both
+    a pre-disaster and a post-disaster image instead of a single post-disaster
+    image, so the comparison against Zarski & Miszczak (2024)'s bitemporal
+    fusion baseline on full xView2 is a fair test of the same input modality,
+    not just a class-imbalance difference.
+
+    share_encoder=True (the first version tested) runs one autoencoder
+    encoder (siamese) on both the pre- and post-disaster images.
+    share_encoder=False builds two independently-weighted encoders instead --
+    Zarski & Miszczak's own ablation (their ResNet50D vs. ResNet50S, Table 7)
+    found two separate feature-extraction paths outperform one shared path
+    on this exact task, since pre- and post-disaster imagery have different
+    visual statistics (undamaged vs. damaged structures) that separate
+    filters can specialize on.
+
+    fusion_mode="concat" (the first version tested) concatenates the raw
+    pre- and post-disaster latent maps channel-wise, leaving the classifier
+    to implicitly learn "what changed" from the two raw feature sets.
+    fusion_mode="post_and_diff" concatenates the post-disaster latent map
+    with the elementwise absolute difference between post and pre -- an
+    explicit change signal, the standard representation in the bitemporal
+    change-detection literature, so the classifier is not required to
+    re-derive it from raw concatenation. Zarski & Miszczak's own ablation
+    likewise found plain concatenation their weakest fusion function.
+
+    Either way, the fused representation is the same shape (channel count),
+    so it feeds into the same MobileNetV2-inspired classification path used
+    everywhere else in this file. Everything downstream of it (classifier
+    path, geo branch, fusion head) is identical to build_full_model, reused
+    as-is."""
+    if image_summary_dim is None:
+        image_summary_dim = IMAGE_SUMMARY_DIM if num_classes == 1 else 16
+
+    pre_input = layers.Input(shape=image_size, name="pre_image_input")
+    post_input = layers.Input(shape=image_size, name="post_image_input")
+
+    if share_encoder:
+        encoder_input, encoder_latent = build_autoencoder_encoder(image_size)
+        shared_encoder = models.Model(encoder_input, encoder_latent, name="shared_bitemporal_encoder")
+        pre_latent = shared_encoder(pre_input)
+        post_latent = shared_encoder(post_input)
+    else:
+        pre_encoder_input, pre_encoder_latent = build_autoencoder_encoder(image_size)
+        pre_encoder = models.Model(pre_encoder_input, pre_encoder_latent, name="pre_bitemporal_encoder")
+        post_encoder_input, post_encoder_latent = build_autoencoder_encoder(image_size)
+        post_encoder = models.Model(post_encoder_input, post_encoder_latent, name="post_bitemporal_encoder")
+        pre_latent = pre_encoder(pre_input)
+        post_latent = post_encoder(post_input)
+
+    if fusion_mode == "concat":
+        fused_latent = layers.Concatenate(axis=-1, name="bitemporal_fusion")([post_latent, pre_latent])
+    elif fusion_mode == "post_and_diff":
+        diff_latent = layers.Lambda(
+            lambda pair: tf.abs(pair[0] - pair[1]), name="bitemporal_diff"
+        )([post_latent, pre_latent])
+        fused_latent = layers.Concatenate(axis=-1, name="bitemporal_fusion")([post_latent, diff_latent])
+    else:
+        raise ValueError(f"unknown fusion_mode: {fusion_mode!r}")
+    latent_shape = fused_latent.shape[1:]
+
+    classifier_path_input, image_summary = build_image_classifier_path(
+        latent_shape, use_residual=use_residual, l2_reg=l2_reg, image_summary_dim=image_summary_dim
+    )
+    classifier_path_model = models.Model(classifier_path_input, image_summary, name="mobilenet_inspired_path")
+    image_summary_out = classifier_path_model(fused_latent)
+
+    geo_input, geo_embedding = build_geo_branch(geo_dim=2, embed_dim=GEO_EMBED_DIM)
+    fused = layers.Concatenate(name="fusion")([image_summary_out, geo_embedding])
+
+    fusion_dim = image_summary_dim + GEO_EMBED_DIM
+    head_input, head_output = build_classifier_head(
+        fusion_dim=fusion_dim, num_classes=num_classes, dropout_rate=dropout_rate, l2_reg=l2_reg,
+    )
+    head_model = models.Model(head_input, head_output, name="classifier_head")
+    outputs = head_model(fused)
+
+    return models.Model([pre_input, post_input, geo_input], outputs, name="autoencoder_c_mobilenetv2_bitemporal")
+
+
+# Depths tapped for multi-stage fusion in build_full_model_bitemporal_pretrained,
+# spanning MobileNetV2's resolution range at a 128x128 input (empirically
+# confirmed shapes: 64x64x96 -> 32x32x144 -> 16x16x192 -> 8x8x576 ->
+# 4x4x1280). Zarski & Miszczak (2024) fuse at multiple stages too, but with
+# a from-scratch network; this fuses at multiple stages of a pretrained
+# backbone, which is neither what they do (no pretraining -- their own
+# paper lists it as future work) nor what this paper's earlier from-scratch
+# bitemporal variant does (single fusion point, after the full encoder).
+# out_relu (the final, most semantically rich stage) is included so the
+# fused representation isn't missing the network's highest-level features.
+MOBILENETV2_FUSION_STAGES = (
+    "block_1_expand_relu",
+    "block_3_expand_relu",
+    "block_6_expand_relu",
+    "block_13_expand_relu",
+    "out_relu",
+)
+
+
+def build_full_model_bitemporal_pretrained(image_size=IMAGE_SIZE, num_classes=1,
+                                            dropout_rate=0.3, l2_reg=1e-4, image_summary_dim=None,
+                                            share_backbone=False, fine_tune_backbone=False,
+                                            fusion_stages=MOBILENETV2_FUSION_STAGES):
+    """Pretrained, multi-stage-fusion bitemporal variant: two ImageNet-pretrained
+    MobileNetV2 backbones (one per pre-/post-disaster image), fused at several
+    depths during feature extraction rather than once at the end.
+
+    share_backbone=False (default) gives each branch its own independently-
+    weighted backbone, matching the earlier from-scratch bitemporal variant's
+    finding that separate branches beat one shared branch on this task.
+    fine_tune_backbone=False (default) freezes the pretrained weights --
+    a standard, safe first transfer-learning setting; set True to unfreeze
+    and fine-tune them once a frozen run's ceiling is known.
+
+    At each of fusion_stages' four depths, the two branches' feature maps are
+    concatenated channel-wise, then globally average-pooled to a fixed-size
+    vector; the four stage vectors are concatenated into one multi-scale
+    summary and projected down to image_summary_dim, then fused with the
+    geolocation embedding exactly as in build_full_model_bitemporal. The
+    downstream fusion head (build_classifier_head) is reused unchanged."""
+    if image_summary_dim is None:
+        image_summary_dim = IMAGE_SUMMARY_DIM if num_classes == 1 else 16
+
+    pre_input = layers.Input(shape=image_size, name="pre_image_input")
+    post_input = layers.Input(shape=image_size, name="post_image_input")
+
+    def _make_backbone(name):
+        base = tf.keras.applications.MobileNetV2(
+            input_shape=image_size, include_top=False, weights="imagenet"
+        )
+        base.trainable = fine_tune_backbone
+        stage_outputs = [base.get_layer(stage_name).output for stage_name in fusion_stages]
+        return models.Model(base.input, stage_outputs, name=f"{name}_multistage")
+
+    if share_backbone:
+        shared_backbone = _make_backbone("shared_pretrained_backbone")
+        pre_stages = shared_backbone(pre_input)
+        post_stages = shared_backbone(post_input)
+    else:
+        pre_backbone = _make_backbone("pre_pretrained_backbone")
+        post_backbone = _make_backbone("post_pretrained_backbone")
+        pre_stages = pre_backbone(pre_input)
+        post_stages = post_backbone(post_input)
+
+    reg = tf.keras.regularizers.l2(l2_reg) if l2_reg else None
+    stage_vectors = []
+    for i, (pre_stage, post_stage) in enumerate(zip(pre_stages, post_stages)):
+        fused_stage = layers.Concatenate(axis=-1, name=f"stage{i}_fusion")([post_stage, pre_stage])
+        pooled = layers.GlobalAveragePooling2D(name=f"stage{i}_pool")(fused_stage)
+        stage_vectors.append(pooled)
+
+    multiscale = layers.Concatenate(name="multiscale_fusion")(stage_vectors) if len(stage_vectors) > 1 else stage_vectors[0]
+    x = layers.Dense(64, activation="relu", kernel_regularizer=reg, name="multiscale_dense1")(multiscale)
+    image_summary_out = layers.Dense(
+        image_summary_dim, activation="relu", kernel_regularizer=reg, name="multiscale_image_summary"
+    )(x)
+
+    geo_input, geo_embedding = build_geo_branch(geo_dim=2, embed_dim=GEO_EMBED_DIM)
+    fused = layers.Concatenate(name="fusion")([image_summary_out, geo_embedding])
+
+    fusion_dim = image_summary_dim + GEO_EMBED_DIM
+    head_input, head_output = build_classifier_head(
+        fusion_dim=fusion_dim, num_classes=num_classes, dropout_rate=dropout_rate, l2_reg=l2_reg,
+    )
+    head_model = models.Model(head_input, head_output, name="classifier_head")
+    outputs = head_model(fused)
+
+    return models.Model([pre_input, post_input, geo_input], outputs, name="pretrained_multistage_bitemporal")
+
+
 def _self_test():
     import numpy as np
 
@@ -206,7 +378,69 @@ def _self_test():
     h, w = latent.shape[1], latent.shape[2]
     assert h > 1 and w > 1, f"encoder latent map collapsed to non-spatial shape: {latent.shape}"
 
-    print(f"self-test OK -- latent map shape: {latent.shape}, binary params: {n_params_binary:,}, severity params: {n_params_severity:,}")
+    bitemporal_model = build_full_model_bitemporal(num_classes=4, use_residual=True)
+    dummy_pre = np.random.rand(2, *IMAGE_SIZE).astype("float32")
+    out_bt = bitemporal_model.predict([dummy_pre, dummy_images, dummy_geo], verbose=0)
+    assert out_bt.shape == (2, 4), f"bitemporal severity output shape wrong: {out_bt.shape}"
+    assert np.allclose(out_bt.sum(axis=1), 1.0, atol=1e-4), "bitemporal softmax rows don't sum to 1"
+    n_params_bitemporal = bitemporal_model.count_params()
+    encoder_params = models.Model(*build_autoencoder_encoder()).count_params()
+    # bitemporal adds one shared encoder call (0 extra weights) plus a wider
+    # first conv in the classifier path (256 fused channels in vs. 128) --
+    # if the encoder were accidentally duplicated instead of shared, this
+    # would be at least one more full encoder's worth of parameters higher.
+    assert n_params_bitemporal < n_params_severity + 2 * encoder_params, (
+        "bitemporal model is far larger than the shared-encoder design should produce -- "
+        "check the encoder is being reused, not rebuilt, for the pre/post branches"
+    )
+
+    unshared_model = build_full_model_bitemporal(num_classes=4, use_residual=True, share_encoder=False)
+    out_unshared = unshared_model.predict([dummy_pre, dummy_images, dummy_geo], verbose=0)
+    assert out_unshared.shape == (2, 4), f"unshared bitemporal output shape wrong: {out_unshared.shape}"
+    n_params_unshared = unshared_model.count_params()
+    # unshared adds one full extra encoder's worth of independent weights
+    # relative to the shared version -- if it didn't, the two encoders
+    # would accidentally be tied together.
+    assert n_params_unshared > n_params_bitemporal + encoder_params * 0.9, (
+        "unshared bitemporal model isn't meaningfully larger than the shared version -- "
+        "check the two encoders are actually independent, not accidentally shared"
+    )
+
+    diff_model = build_full_model_bitemporal(num_classes=4, use_residual=True, fusion_mode="post_and_diff")
+    out_diff = diff_model.predict([dummy_pre, dummy_images, dummy_geo], verbose=0)
+    assert out_diff.shape == (2, 4), f"post_and_diff bitemporal output shape wrong: {out_diff.shape}"
+    assert np.allclose(out_diff.sum(axis=1), 1.0, atol=1e-4), "post_and_diff softmax rows don't sum to 1"
+    # post_and_diff feeds the same channel width (post-latent + diff-latent,
+    # both 128-channel) into the classifier path as concat (post + pre, also
+    # both 128-channel) -- same total parameter count, only the content differs.
+    assert diff_model.count_params() == bitemporal_model.count_params(), (
+        "post_and_diff and concat fusion should produce the same parameter count "
+        "(same channel width feeding the classifier path), only the fused content differs"
+    )
+    try:
+        build_full_model_bitemporal(num_classes=4, fusion_mode="not_a_real_mode")
+        raise AssertionError("build_full_model_bitemporal should reject an unknown fusion_mode")
+    except ValueError:
+        pass
+
+    pretrained_model = build_full_model_bitemporal_pretrained(num_classes=4)
+    out_pretrained = pretrained_model.predict([dummy_pre, dummy_images, dummy_geo], verbose=0)
+    assert out_pretrained.shape == (2, 4), f"pretrained bitemporal output shape wrong: {out_pretrained.shape}"
+    assert np.allclose(out_pretrained.sum(axis=1), 1.0, atol=1e-4), "pretrained bitemporal softmax rows don't sum to 1"
+    n_params_pretrained = pretrained_model.count_params()
+    n_trainable_pretrained = sum(int(np.prod(v.shape)) for v in pretrained_model.trainable_weights)
+    # with the backbones frozen (default), only the fusion head + geo branch +
+    # multiscale projection should be trainable -- a small fraction of the
+    # total parameter count, since the two MobileNetV2 backbones dominate it.
+    assert n_trainable_pretrained < n_params_pretrained * 0.2, (
+        f"expected frozen backbones to leave only a small trainable fraction, "
+        f"got {n_trainable_pretrained:,} trainable of {n_params_pretrained:,} total"
+    )
+
+    print(f"self-test OK -- latent map shape: {latent.shape}, binary params: {n_params_binary:,}, "
+          f"severity params: {n_params_severity:,}, bitemporal severity params: {n_params_bitemporal:,}, "
+          f"unshared bitemporal params: {n_params_unshared:,}, "
+          f"pretrained multistage params: {n_params_pretrained:,} ({n_trainable_pretrained:,} trainable)")
 
 
 if __name__ == "__main__":

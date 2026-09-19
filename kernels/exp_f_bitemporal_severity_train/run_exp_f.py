@@ -1,0 +1,82 @@
+import os
+import sys
+import zipfile
+
+CODE_CANDIDATES = (
+    "/kaggle/input/datasets/amanjolly1994/ieee-access-hurricane-code",
+    "/kaggle/input/ieee-access-hurricane-code",
+)
+DATA_CANDIDATES = (
+    "/kaggle/input/notebooks/amanjolly1994/xbd-full-bitemporal-preprocess/xbd_full_bitemporal_patches",
+    "/kaggle/input/xbd-full-bitemporal-preprocess/xbd_full_bitemporal_patches",
+    "/kaggle/input/datasets/amanjolly1994/xbd-full-bitemporal-preprocess/xbd_full_bitemporal_patches",
+    "/kaggle/input/xbd-full-bitemporal-preprocess",
+)
+# A kernel_source with many output files gets exposed as a single
+# _output_.zip instead of a browsable directory tree -- unzip it into
+# working storage before falling back to the plain-directory candidates.
+ZIPPED_OUTPUT_CANDIDATES = (
+    "/kaggle/input/notebooks/amanjolly1994/xbd-full-bitemporal-preprocess/_output_.zip",
+    "/kaggle/input/xbd-full-bitemporal-preprocess/_output_.zip",
+)
+EXTRACT_DIR = "/kaggle/working/_xbd_full_bitemporal_extracted"
+
+
+def _print_input_tree(path="/kaggle/input", max_depth=5):
+    def walk(p, depth):
+        if depth > max_depth or not os.path.isdir(p):
+            return
+        for e in sorted(os.listdir(p))[:10]:
+            full = os.path.join(p, e)
+            print("  " * depth + e + ("/" if os.path.isdir(full) else ""))
+            if os.path.isdir(full):
+                walk(full, depth + 1)
+    print("=== /kaggle/input tree ===")
+    walk(path, 0)
+
+
+def _first_existing(candidates, label):
+    for c in candidates:
+        print(f"trying {label} candidate: {c}")
+        if os.path.isdir(c) and (label != "data" or os.path.exists(os.path.join(c, "metadata.csv"))):
+            return c
+    return None
+
+
+_print_input_tree()
+
+for zip_path in ZIPPED_OUTPUT_CANDIDATES:
+    print(f"trying zipped-output candidate: {zip_path}")
+    if os.path.exists(zip_path):
+        print(f"extracting {zip_path} -> {EXTRACT_DIR}")
+        os.makedirs(EXTRACT_DIR, exist_ok=True)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(EXTRACT_DIR)
+        DATA_CANDIDATES = (os.path.join(EXTRACT_DIR, "xbd_full_bitemporal_patches"),) + DATA_CANDIDATES
+        break
+
+code_root = _first_existing(CODE_CANDIDATES, "code")
+data_root = _first_existing(DATA_CANDIDATES, "data")
+
+if code_root is None or data_root is None:
+    raise FileNotFoundError(
+        f"code_root={code_root}, data_root={data_root} -- check the /kaggle/input tree "
+        "printed above and update DATA_CANDIDATES/CODE_CANDIDATES."
+    )
+
+print(f"using code_root={code_root}, data_root={data_root}")
+
+sys.path.insert(0, code_root)
+from train_bitemporal_xview2 import run  # noqa: E402
+
+run(
+    root=data_root,
+    epochs=30,
+    out_dir="/kaggle/working/exp_f_bitemporal_pretrained_v1",
+    use_focal_loss=True,
+    l2_reg=1e-4,
+    augment=True,
+    model_variant="pretrained",
+    share_backbone=False,
+    fine_tune_backbone=False,
+)

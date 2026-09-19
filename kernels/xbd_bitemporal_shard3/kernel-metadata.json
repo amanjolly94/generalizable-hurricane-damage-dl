@@ -1,0 +1,19 @@
+{
+  "id": "nupursharma094/xbd-bitemporal-shard3",
+  "title": "xBD Bitemporal Shard 3",
+  "code_file": "run_preprocess.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "",
+  "dataset_sources": [
+    "qianlanzz/xbd-dataset",
+    "amanjolly1994/ieee-access-hurricane-code"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "amanjolly1994/exp-f-pretrained-finetune",
+  "title": "Exp F Pretrained Finetune",
+  "code_file": "run_exp_f.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "",
+  "dataset_sources": ["amanjolly1994/ieee-access-hurricane-code"],
+  "competition_sources": [],
+  "kernel_sources": ["amanjolly1994/xbd-full-bitemporal-preprocess"],
+  "model_sources": []
+}

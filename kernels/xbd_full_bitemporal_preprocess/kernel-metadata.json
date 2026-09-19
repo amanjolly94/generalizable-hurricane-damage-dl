@@ -1,0 +1,16 @@
+{
+  "id": "amanjolly1994/xbd-full-bitemporal-preprocess",
+  "title": "xBD Full Bitemporal Preprocess",
+  "code_file": "run_preprocess.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "false",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "",
+  "dataset_sources": ["qianlanzz/xbd-dataset", "amanjolly1994/ieee-access-hurricane-code"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}
