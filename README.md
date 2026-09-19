@@ -8,7 +8,7 @@ Code accompanying "Multimodal Deep Learning for Post-Hurricane Damage Assessment
 
 A convolutional autoencoder extracts a spatial feature map from satellite imagery, which passes through a MobileNetV2-inspired classification path (Conv2D, DepthwiseConv2D, BatchNorm, a residual connection) and is fused with a small geolocation embedding built from latitude and longitude. See `code/model.py`.
 
-For the bitemporal head-to-head comparison, the geolocation branch is replaced with a second image branch (the pre-disaster image alongside the post-disaster one). Two variants: a lightweight from-scratch dual encoder (`build_full_model_bitemporal`), and a pretrained, multi-stage-fusion variant using two ImageNet-pretrained MobileNetV2 backbones fused at five depths (`build_full_model_bitemporal_pretrained`). See `code/model.py` and `code/train_bitemporal_xview2.py`.
+For the bitemporal head-to-head comparison, a second image branch (the pre-disaster image alongside the post-disaster one) is added, keeping the same geolocation branch as everywhere else in this repo. Two variants: a lightweight from-scratch dual encoder (`build_full_model_bitemporal`), and a pretrained, multi-stage-fusion variant using two ImageNet-pretrained MobileNetV2 backbones fused at five depths (`build_full_model_bitemporal_pretrained`). See `code/model.py` and `code/train_bitemporal_xview2.py`.
 
 ## Data
 
