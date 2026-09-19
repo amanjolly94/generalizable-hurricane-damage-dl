@@ -1,6 +1,6 @@
 # Multimodal Deep Learning for Post-Hurricane Building Damage Assessment
 
-Code accompanying "Toward Generalizable Multimodal Deep Learning for Post-Hurricane Building Damage Assessment" (Jolly, Sharma, Pandey). Reproduces every experimental result reported in the paper: binary damage classification, cross-hurricane generalization, severity classification, statistical significance testing, and Grad-CAM explainability.
+Code accompanying "Multimodal Deep Learning for Post-Hurricane Damage Assessment: Generalization, Efficiency, and a Head-to-Head Bitemporal Fusion Comparison" (Jolly, Sharma, Pandey, et al.). Reproduces every experimental result reported in the paper: binary damage classification, cross-hurricane generalization, severity classification, statistical significance testing, Grad-CAM explainability, and a bitemporal head-to-head comparison against a published IEEE Access architecture.
 
 **Status**: submitted to IEEE Access.
 
@@ -8,26 +8,32 @@ Code accompanying "Toward Generalizable Multimodal Deep Learning for Post-Hurric
 
 A convolutional autoencoder extracts a spatial feature map from satellite imagery, which passes through a MobileNetV2-inspired classification path (Conv2D, DepthwiseConv2D, BatchNorm, a residual connection) and is fused with a small geolocation embedding built from latitude and longitude. See `code/model.py`.
 
+For the bitemporal head-to-head comparison, the geolocation branch is replaced with a second image branch (the pre-disaster image alongside the post-disaster one). Two variants: a lightweight from-scratch dual encoder (`build_full_model_bitemporal`), and a pretrained, multi-stage-fusion variant using two ImageNet-pretrained MobileNetV2 backbones fused at five depths (`build_full_model_bitemporal_pretrained`). See `code/model.py` and `code/train_bitemporal_xview2.py`.
+
 ## Data
 
-Two public datasets, neither included in this repository:
+Two public data sources, neither included in this repository, used in three configurations:
 
 - **Hurricane Harvey benchmark**: Kaggle dataset `kmader/satellite-images-of-hurricane-damage`.
-- **xBD**: multi-hazard building damage dataset, used here via its four hurricane subsets (Harvey, Florence, Matthew, Michael). Sourced through the Kaggle mirror `qianlanzz/xbd-dataset`.
+- **xBD**, four-hurricane subset (Harvey, Florence, Matthew, Michael), used for the cross-hurricane and severity experiments. Sourced through the Kaggle mirror `qianlanzz/xbd-dataset`.
+- **xBD/xView2**, full seventeen-disaster set, reprocessed with paired pre- and post-disaster images for the bitemporal head-to-head comparison against Żarski and Miszczak (2024, IEEE Access). Same Kaggle mirror, `--all-disasters --include-pre-disaster`.
 
 ## Repository layout
 
 ```
 code/
-  model.py                  Model architecture (binary and severity heads)
-  train.py                  Training loop, evaluation, focal loss, two-proportion z-test inputs
-  train_cross_hurricane.py  Leave-one-hurricane-out generalization experiment
-  baseline_train.py         VGG16 / MobileNetV2 / DenseNet121 baselines
-  gradcam_eval.py           Grad-CAM + quantitative pointing-game evaluation
-  harvey_preprocess.py      Loads the Harvey dataset (geolocation is encoded in filenames)
-  xbd_preprocess.py         Crops xBD building polygons into per-building patches with labels
-  make_figures.py           Regenerates the paper's result figures from recorded metrics
-  make_sample_figure.py     Regenerates the dataset-sample and colorspace figures
+  model.py                     Model architecture (binary, severity, and bitemporal heads)
+  train.py                     Training loop, evaluation, focal loss, two-proportion z-test inputs
+  train_cross_hurricane.py     Leave-one-hurricane-out generalization experiment
+  train_bitemporal_xview2.py   Bitemporal head-to-head comparison, both model variants
+  baseline_train.py            VGG16 / MobileNetV2 / DenseNet121 baselines
+  gradcam_eval.py              Grad-CAM + quantitative pointing-game evaluation
+  harvey_preprocess.py         Loads the Harvey dataset (geolocation is encoded in filenames)
+  xbd_preprocess.py            Crops xBD building polygons into per-building patches with labels;
+                                --all-disasters and --include-pre-disaster extend this to the full
+                                bitemporal xView2 set
+  make_figures.py              Regenerates the paper's result figures from recorded metrics
+  make_sample_figure.py        Regenerates the dataset-sample and colorspace figures
 
 kernels/
   One folder per experiment, each a self-contained Kaggle kernel push:
