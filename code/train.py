@@ -128,6 +128,28 @@ def measure_latency(model, sample_inputs, n_runs=50):
     return elapsed / n_runs
 
 
+def save_predictions(path, samples, test_idx, y_test, y_pred_prob):
+    """Per-sample predicted probabilities on the test split, keyed by the
+    sample's source image path so predictions from separate training runs
+    (this model vs. the baselines in baseline_train.py) can be joined later
+    for a paired test (McNemar's) or a threshold sweep -- neither of which
+    is possible from aggregate accuracy alone."""
+    probs = np.atleast_2d(y_pred_prob)
+    if probs.shape[1] == 1:
+        probs = probs.ravel()
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["path", "true_label", "pred_prob"])
+            for i, idx in enumerate(test_idx):
+                writer.writerow([samples[idx][0], int(y_test[i]), float(probs[i])])
+    else:
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["path", "true_label"] + [f"pred_prob_{c}" for c in range(probs.shape[1])])
+            for i, idx in enumerate(test_idx):
+                writer.writerow([samples[idx][0], int(y_test[i])] + [float(p) for p in probs[i]])
+
+
 def evaluate_binary(y_true, y_pred_prob):
     y_pred = (y_pred_prob.ravel() >= 0.5).astype(int)
     tp = int(((y_pred == 1) & (y_true == 1)).sum())
@@ -161,6 +183,7 @@ def evaluate_severity(y_true, y_pred_prob, num_classes=4):
 def run(dataset, root, num_classes, epochs, out_dir, max_samples=None, seed=42, use_focal_loss=False):
     os.makedirs(out_dir, exist_ok=True)
     np.random.seed(seed)
+    tf.random.set_seed(seed)
 
     if dataset == "harvey":
         samples = load_harvey_samples(root)
@@ -224,6 +247,8 @@ def run(dataset, root, num_classes, epochs, out_dir, max_samples=None, seed=42, 
     else:
         metrics = evaluate_severity(y_test, y_pred_prob, num_classes=num_classes)
 
+    save_predictions(os.path.join(out_dir, "predictions.csv"), samples, test_idx, y_test, y_pred_prob)
+
     n_params = model.count_params()
     flops = compute_flops(model)
     sample_inputs = [images[test_idx][:1], geos[test_idx][:1]]
@@ -251,16 +276,50 @@ def run(dataset, root, num_classes, epochs, out_dir, max_samples=None, seed=42, 
     return result
 
 
+def _self_test():
+    import tempfile
+
+    # save_predictions: binary case (scalar prob column) and multi-class
+    # case (one prob column per class), keyed by path so a separate script's
+    # predictions.csv on the same test_idx can be joined by that key.
+    samples = [(f"/fake/img{i}.png", 0.0, 0.0, i % 2, i % 4) for i in range(6)]
+    test_idx = [1, 3, 5]
+    y_test = [1, 1, 1]
+    with tempfile.TemporaryDirectory() as tmp:
+        binary_path = os.path.join(tmp, "binary_predictions.csv")
+        save_predictions(binary_path, samples, test_idx, y_test, np.array([[0.9], [0.2], [0.6]]))
+        with open(binary_path) as f:
+            rows = list(csv.reader(f))
+        assert rows[0] == ["path", "true_label", "pred_prob"]
+        assert rows[1] == ["/fake/img1.png", "1", "0.9"]
+        assert len(rows) == 4
+
+        multi_path = os.path.join(tmp, "multi_predictions.csv")
+        save_predictions(multi_path, samples, test_idx, y_test, np.array([[0.1, 0.2, 0.3, 0.4]] * 3))
+        with open(multi_path) as f:
+            rows = list(csv.reader(f))
+        assert rows[0] == ["path", "true_label", "pred_prob_0", "pred_prob_1", "pred_prob_2", "pred_prob_3"]
+        assert rows[1][2:] == ["0.1", "0.2", "0.3", "0.4"]
+
+    print("self-test OK")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", choices=["harvey", "xbd"], required=True)
-    parser.add_argument("--root", required=True)
+    parser.add_argument("--dataset", choices=["harvey", "xbd"])
+    parser.add_argument("--root")
     parser.add_argument("--num-classes", type=int, choices=[1, 4], default=1)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--out-dir", default="/kaggle/working/train_output")
     parser.add_argument("--use-focal-loss", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
-    run(args.dataset, args.root, args.num_classes, args.epochs, args.out_dir, args.max_samples,
-        use_focal_loss=args.use_focal_loss)
+    if args.self_test:
+        _self_test()
+    else:
+        if not args.dataset or not args.root:
+            parser.error("--dataset and --root are required unless --self-test is passed")
+        run(args.dataset, args.root, args.num_classes, args.epochs, args.out_dir, args.max_samples,
+            use_focal_loss=args.use_focal_loss)

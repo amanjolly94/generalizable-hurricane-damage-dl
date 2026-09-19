@@ -13,6 +13,7 @@ Run inside a Kaggle kernel with GPU enabled and
 dataset_sources: ["kmader/satellite-images-of-hurricane-damage"].
 """
 import argparse
+import csv
 import json
 import os
 import sys
@@ -70,7 +71,22 @@ def run_one(arch_name, images, geos, labels, train_idx, test_idx, epochs, out_di
     with open(os.path.join(arch_dir, "results.json"), "w") as f:
         json.dump(result, f, indent=2)
     print(json.dumps(result, indent=2))
-    return result
+    return result, y_pred_prob.ravel()
+
+
+def save_combined_predictions(path, samples, test_idx, labels, all_probs, arch_names):
+    """One predictions file across all baselines, keyed by source image path
+    so it can be joined with the proposed model's own predictions.csv
+    (train.py's save_predictions) for a paired test (McNemar's) or a
+    threshold sweep -- both need per-sample predictions from every model on
+    the identical test items, which aggregate accuracy alone can't provide."""
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["path", "true_label"] + [f"{a}_prob" for a in arch_names])
+        for i, idx in enumerate(test_idx):
+            row = [samples[idx][0], int(labels[test_idx][i])]
+            row += [float(all_probs[a][i]) for a in arch_names]
+            writer.writerow(row)
 
 
 def run(root, epochs, out_dir, max_samples=None, seed=42):
@@ -89,21 +105,58 @@ def run(root, epochs, out_dir, max_samples=None, seed=42):
 
     os.makedirs(out_dir, exist_ok=True)
     all_results = {}
+    all_probs = {}
     for arch_name in ARCHITECTURES:
         print(f"=== training baseline: {arch_name} ===")
-        all_results[arch_name] = run_one(arch_name, images, geos, labels, train_idx, test_idx, epochs, out_dir)
+        all_results[arch_name], all_probs[arch_name] = run_one(
+            arch_name, images, geos, labels, train_idx, test_idx, epochs, out_dir
+        )
 
     with open(os.path.join(out_dir, "all_baselines.json"), "w") as f:
         json.dump(all_results, f, indent=2)
+
+    save_combined_predictions(
+        os.path.join(out_dir, "predictions.csv"), samples, test_idx, labels, all_probs, list(ARCHITECTURES)
+    )
+
     return all_results
+
+
+def _self_test():
+    import tempfile
+
+    samples = [(f"/fake/img{i}.png", 0.0, 0.0, i % 2, i % 4) for i in range(6)]
+    test_idx = [1, 3, 5]
+    labels = np.array([0, 1, 0, 1, 0, 1])
+    all_probs = {
+        "VGG16": np.array([0.9, 0.2, 0.6]),
+        "MobileNetV2": np.array([0.8, 0.3, 0.5]),
+        "DenseNet121": np.array([0.7, 0.4, 0.4]),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "predictions.csv")
+        save_combined_predictions(path, samples, test_idx, labels, all_probs, list(ARCHITECTURES))
+        with open(path) as f:
+            rows = list(csv.reader(f))
+        assert rows[0] == ["path", "true_label", "VGG16_prob", "MobileNetV2_prob", "DenseNet121_prob"]
+        assert rows[1] == ["/fake/img1.png", "1", "0.9", "0.8", "0.7"]
+        assert len(rows) == 4
+
+    print("self-test OK")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", required=True)
+    parser.add_argument("--root")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--out-dir", default="/kaggle/working/exp_c_baselines")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
-    run(args.root, args.epochs, args.out_dir, args.max_samples)
+    if args.self_test:
+        _self_test()
+    else:
+        if not args.root:
+            parser.error("--root is required unless --self-test is passed")
+        run(args.root, args.epochs, args.out_dir, args.max_samples)
