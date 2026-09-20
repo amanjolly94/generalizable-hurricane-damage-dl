@@ -1,6 +1,6 @@
 # Multimodal Deep Learning for Post-Hurricane Building Damage Assessment
 
-Code accompanying "Multimodal Deep Learning for Post-Hurricane Damage Assessment: Generalization, Efficiency, and a Head-to-Head Bitemporal Fusion Comparison" (Jolly, Sharma, Pandey, et al.). Reproduces every experimental result reported in the paper: binary damage classification, cross-hurricane generalization, severity classification, statistical significance testing, Grad-CAM explainability, and a bitemporal head-to-head comparison against a published IEEE Access architecture.
+Code accompanying "Multimodal Post-Hurricane Damage Assessment: A Head-to-Head Bitemporal Fusion Comparison" (Jolly, Sharma, Pandey, et al.). Reproduces every experimental result reported in the paper: binary damage classification, cross-hurricane generalization, severity classification, statistical significance testing, Grad-CAM explainability, and a bitemporal head-to-head comparison against a published IEEE Access architecture.
 
 **Status**: submitted to IEEE Access.
 
